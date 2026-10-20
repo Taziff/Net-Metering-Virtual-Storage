@@ -7,33 +7,66 @@ class NetMeteringStorageConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Obsługa dwuetapowego okienka konfiguracji."""
     VERSION = 1
 
-    def __init__(self):
-        self.init_data = {}
+        def __init__(self, hass, config, is_raw):
+        # ... (poprzedni kod inicjalizacji bez zmian) ...
+        self._factor = config[CONF_FACTOR]
+        
+        # Pobieramy dokładne dane wpisane przez użytkownika dla każdego miesiąca z osobna
+        self._months_storage = config["initial_months"].copy()
+        
+        # Zapisujemy jaki jest miesiąc w momencie uruchomienia integracji
+        self._current_tracked_month = datetime.now().month
+        # ... (reszta kodu __init__ bez zmian) ...
 
-    async def async_step_user(self, user_input=None):
-        """Krok 1: Wybór encji i współczynnika."""
-        if user_input is not None:
-            self.init_data.update(user_input)
-            return await self.async_step_months()
+    def async_update_values(self):
+        """Przeliczanie stanu magazynu z automatycznym resetem miesięcy."""
+        exp_state = self.hass.states.get(self._export_entity)
+        imp_state = self.hass.states.get(self._import_entity)
+        
+        if not exp_state or not imp_state:
+            return
 
-        data_schema = vol.Schema({
-            vol.Required(CONF_SOURCE_EXPORT): selector({"entity": {"domain": "sensor", "device_class": "energy"}}),
-            vol.Required(CONF_SOURCE_IMPORT): selector({"entity": {"domain": "sensor", "device_class": "energy"}}),
-            vol.Required(CONF_FACTOR, default=0.8): vol.All(vol.Coerce(float), vol.Range(min=0.1, max=1.0)),
-        })
+        try:
+            current_export = float(exp_state.state)
+            current_import = float(imp_state.state)
+        except ValueError:
+            return
 
-        return self.async_show_form(step_id="user", data_schema=data_schema)
+        now_month = datetime.now().month
 
-    async def async_step_months(self, user_input=None):
-        """Krok 2: Wprowadzenie wartości początkowych dla każdego miesiąca."""
-        if user_input is not None:
-            # Mapujemy wprowadzone pola tekstowe m1-m12 na strukturę słownika w danych integracji
-            self.init_data["initial_months"] = {int(k[1:]): float(v) for k, v in user_input.items()}
-            return self.async_create_entry(title="Wirtualny Magazyn Energii", data=self.init_data)
+        # --- TWÓJ POMYSŁ: Automatyczne nadpisywanie miesiąca po roku ---
+        if now_month != self._current_tracked_month:
+            # Miesiąc właśnie się zmienił! Nadpisujemy (zerujemy) dane tego nowego miesiąca, 
+            # ponieważ energia wyprodukowana w nim dokładnie rok temu właśnie bezpowrotnie wygasła.
+            self._months_storage[now_month] = 0.0
+            self._current_tracked_month = now_month
+            _LOGGER.info("Wirtualny Magazyn: Nastąpiła zmiana miesiąca na %s. Resetowanie stanu sprzed roku.", now_month)
 
-        # Tworzymy formularz z 12 polami (każde domyślnie ustawione na 0.0)
-        months_schema = vol.Schema({
-            vol.Required(f"m{i}", default=0.0): vol.Coerce(float) for i in range(1, 13)
-        })
+        if self._last_export is not None and self._last_import is not None:
+            delta_export = current_export - self._last_export
+            delta_import = current_import - self._last_import
+            
+            # 1. Dodaj bieżący eksport do aktualnego miesiąca
+            if delta_export > 0:
+                self._months_storage[now_month] += delta_export
 
-        return self.async_show_form(step_id="months", data_schema=months_schema)
+            # 2. Odejmij import (zużycie) na zasadzie FIFO (od najstarszego)
+            if delta_import > 0:
+                pobor_surowy = delta_import / self._factor
+                
+                # Ustalamy kolejność zużywania prądu: od najstarszego pakietu do obecnego miesiąca
+                order = list(range(now_month + 1, 13)) + list(range(1, now_month + 1))
+                for m in order:
+                    if self._months_storage[m] >= pobor_surowy:
+                        self._months_storage[m] -= pobor_surowy
+                        pobor_surowy = 0
+                        break
+                    else:
+                        pobor_surowy -= self._months_storage[m]
+                        self._months_storage[m] = 0.0
+                    if pobor_surowy <= 0:
+                        break
+
+        self._last_export = current_export
+        self._last_import = current_import
+        self.async_write_ha_state()
