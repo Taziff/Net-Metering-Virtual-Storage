@@ -1,0 +1,10 @@
+{
+  "domain": "net_metering_storage",
+  "name": "Net Metering Virtual Storage",
+  "codeowners": [],
+  "config_flow": true,
+  "documentation": "https://github.com",
+  "iot_class": "local_calculation",
+  "issue_tracker": "https://github.com/issues",
+  "version": "1.0.0"
+}
