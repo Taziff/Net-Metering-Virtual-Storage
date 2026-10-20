@@ -1,0 +1,5 @@
+DOMAIN = "net_metering_storage"
+CONF_SOURCE_EXPORT = "source_export"
+CONF_SOURCE_IMPORT = "source_import"
+CONF_FACTOR = "factor"
+CONF_INITIAL_BALANCE = "initial_balance"
