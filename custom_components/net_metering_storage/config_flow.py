@@ -4,19 +4,14 @@ from homeassistant.helpers.selector import selector
 from .const import DOMAIN, CONF_SOURCE_EXPORT, CONF_SOURCE_IMPORT, CONF_FACTOR
 
 class NetMeteringStorageConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
-    """Obsługa dwuetapowego okienka konfiguracji."""
+    """Obsługa dwuetapowego okienka konfiguracji bez utraty stanu w pamięci."""
     VERSION = 1
-
-    def __init__(self):
-        """Inicjalizacja przepływu konfiguracji."""
-        self.init_data = {}
 
     async def async_step_user(self, user_input=None):
         """Krok 1: Wybór encji i współczynnika."""
         if user_input is not None:
-            self.init_data.update(user_input)
-            # POPRAWKA: Przejście do kolejnego kroku musi być wywołane przez przekazanie pustego słownika do funkcji obsługującej krok
-            return await self.async_step_months(user_input=None)
+            # Przekazujemy zebrane dane z kroku 1 bezpośrednio jako kontekst (user_input) do kroku 2
+            return await self.async_step_months(user_input=None, step_1_data=user_input)
 
         data_schema = vol.Schema({
             vol.Required(CONF_SOURCE_EXPORT): selector({"entity": {"domain": "sensor", "device_class": "energy"}}),
@@ -26,14 +21,22 @@ class NetMeteringStorageConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         return self.async_show_form(step_id="user", data_schema=data_schema)
 
-    async def async_step_months(self, user_input=None):
+    async def async_step_months(self, user_input=None, step_1_data=None):
         """Krok 2: Wprowadzenie wartości początkowych dla każdego miesiąca."""
-        if user_input is not None:
-            # Mapujemy wprowadzone pola tekstowe m1-m12 na strukturę słownika w danych integracji
-            self.init_data["initial_months"] = {int(k[1:]): float(v) for k, v in user_input.items()}
-            return self.async_create_entry(title="Wirtualny Magazyn Energii", data=self.init_data)
+        # Przy pierwszym wywołaniu kroku 2, zapisujemy dane z kroku 1 w wewnętrznym kontekście przepływu HA
+        if step_1_data is not None:
+            self._step_1_data = step_1_data
 
-        # Tworzymy formularz z 12 polami (każde domyślnie ustawione na 0.0)
+        if user_input is not None:
+            # Łączymy dane z kroku 1 (z licznika) oraz kroku 2 (wpisane miesiące)
+            final_data = {}
+            if hasattr(self, "_step_1_data"):
+                final_data.update(self._step_1_data)
+                
+            final_data["initial_months"] = {int(k[1:]): float(v) for k, v in user_input.items()}
+            return self.async_create_entry(title="Wirtualny Magazyn Energii", data=final_data)
+
+        # Wyświetlamy formularz z 12 polami miesięcy
         months_schema = vol.Schema({
             vol.Required(f"m{i}", default=0.0): vol.Coerce(float) for i in range(1, 13)
         })
