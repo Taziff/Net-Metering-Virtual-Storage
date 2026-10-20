@@ -1,0 +1,16 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Konfiguracja Wirtualnego Magazynu Energii",
+        "description": "Podaj encje zbilansowane oraz początkowy stan magazynu z ostatniej faktury.",
+        "data": {
+          "source_export": "Encja zbilansowanego eksportu (kWh)",
+          "source_import": "Encja zbilansowanego importu (kWh)",
+          "factor": "Współczynnik opustu (np. 0.8 dla instalacji do 10kW)",
+          "initial_balance": "Aktualny surowy stan magazynu z faktury (kWh)"
+        }
+      }
+    }
+  }
+}
