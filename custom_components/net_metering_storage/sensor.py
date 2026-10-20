@@ -19,50 +19,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
 class VirtualStorageSensor(SensorEntity):
     """Implementacja sensora wirtualnego magazynu."""
     
-    def __init__(self, hass, config, is_raw):
-        self.hass = hass
-        self._is_raw = is_raw
-        self._export_entity = config[CONF_SOURCE_EXPORT]
-        self._import_entity = config[CONF_SOURCE_IMPORT]
+        def __init__(self, hass, config, is_raw):
+        # ... (poprzedni kod inicjalizacji bez zmian) ...
         self._factor = config[CONF_FACTOR]
         
-        # Inicjalizacja magazynu miesięcznego (12 miesięcy)
-        self._months_storage = {i: 0.0 for i in range(1, 13)}
+        # Pobieramy dokładne dane wpisane przez użytkownika dla każdego miesiąca z osobna
+        self._months_storage = config["initial_months"].copy()
         
-        # Wpisanie wartości początkowej z faktury do bieżącego miesiąca jako punkt startowy
-        current_month = datetime.now().month
-        self._months_storage[current_month] = config[CONF_INITIAL_BALANCE]
-        
-        self._attr_device_class = SensorDeviceClass.ENERGY
-        self._attr_state_class = SensorStateClass.TOTAL
-        self._attr_unit_of_measurement = "kWh"
-        
-        if is_raw:
-            self._attr_name = "Wirtualny Magazyn - Energia Wprowadzona"
-            self._attr_unique_id = f"{entry.entry_id}_storage_raw"
-        else:
-            self._attr_name = "Wirtualny Magazyn - Do Odebrania (Czysta)"
-            self._attr_unique_id = f"{entry.entry_id}_storage_net"
-
-        self._last_export = None
-        self._last_import = None
-
-    async def async_added_to_hass(self):
-        """Rejestracja nasłuchiwania zmian na licznikach fizycznych."""
-        @callback
-        def _state_changed_listener(event):
-            self.async_update_values()
-
-        self.async_on_remove(async_track_state_change_event(self.hass, [self._export_entity, self._import_entity], _state_changed_listener))
-        
-        # Pobranie stanów początkowych
-        exp_state = self.hass.states.get(self._export_entity)
-        imp_state = self.hass.states.get(self._import_entity)
-        if exp_state: self._last_export = float(exp_state.state)
-        if imp_state: self._last_import = float(imp_state.state)
+        # Zapisujemy jaki jest miesiąc w momencie uruchomienia integracji
+        self._current_tracked_month = datetime.now().month
+        # ... (reszta kodu __init__ bez zmian) ...
 
     def async_update_values(self):
-        """Przeliczanie stanu magazynu na podstawie przyrostu liczników."""
+        """Przeliczanie stanu magazynu z automatycznym resetem miesięcy."""
         exp_state = self.hass.states.get(self._export_entity)
         imp_state = self.hass.states.get(self._import_entity)
         
@@ -75,23 +44,30 @@ class VirtualStorageSensor(SensorEntity):
         except ValueError:
             return
 
+        now_month = datetime.now().month
+
+        # --- TWÓJ POMYSŁ: Automatyczne nadpisywanie miesiąca po roku ---
+        if now_month != self._current_tracked_month:
+            # Miesiąc właśnie się zmienił! Nadpisujemy (zerujemy) dane tego nowego miesiąca, 
+            # ponieważ energia wyprodukowana w nim dokładnie rok temu właśnie bezpowrotnie wygasła.
+            self._months_storage[now_month] = 0.0
+            self._current_tracked_month = now_month
+            _LOGGER.info("Wirtualny Magazyn: Nastąpiła zmiana miesiąca na %s. Resetowanie stanu sprzed roku.", now_month)
+
         if self._last_export is not None and self._last_import is not None:
             delta_export = current_export - self._last_export
             delta_import = current_import - self._last_import
             
-            current_month = datetime.now().month
-            
             # 1. Dodaj bieżący eksport do aktualnego miesiąca
             if delta_export > 0:
-                self._months_storage[current_month] += delta_export
+                self._months_storage[now_month] += delta_export
 
-            # 2. Odejmij import (zużycie) z zachowaniem zasady FIFO (od najstarszego miesiąca)
+            # 2. Odejmij import (zużycie) na zasadzie FIFO (od najstarszego)
             if delta_import > 0:
-                # Koszt poboru z magazynu surowego (1 kWh pobrany = 1 / współczynnik w magazynie surowym)
                 pobor_surowy = delta_import / self._factor
                 
-                # Przechodzimy przez miesiące zaczynając od kolejnego po bieżącym (najstarszego w cyklu 12m)
-                order = list(range(current_month + 1, 13)) + list(range(1, current_month + 1))
+                # Ustalamy kolejność zużywania prądu: od najstarszego pakietu do obecnego miesiąca
+                order = list(range(now_month + 1, 13)) + list(range(1, now_month + 1))
                 for m in order:
                     if self._months_storage[m] >= pobor_surowy:
                         self._months_storage[m] -= pobor_surowy
@@ -107,27 +83,3 @@ class VirtualStorageSensor(SensorEntity):
         self._last_import = current_import
         self.async_write_ha_state()
 
-    @property
-    def state(self):
-        """Zwraca sumaryczną wartość magazynu."""
-        total_raw = sum(self._months_storage.values())
-        if self._is_raw:
-            return round(total_raw, 2)
-        return round(total_raw * self._factor, 2)
-
-    @property
-    def extra_state_attributes(self):
-        """Rozbicie wartości na poszczególne miesiące widoczne w szczegółach sensora."""
-        months_names = {
-            1: "Styczeń", 2: "Luty", 3: "Marzec", 4: "Kwiecień", 
-            5: "Maj", 6: "Czerwiec", 7: "Lipiec", 8: "Sierpień", 
-            9: "Wrzesień", 10: "Październik", 11: "Listopad", 12: "Grudzień"
-        }
-        
-        attributes = {}
-        multiplier = 1.0 if self._is_raw else self._factor
-        
-        for m, val in self._months_storage.items():
-            attributes[months_names[m]] = f"{round(val * multiplier, 2)} kWh"
-            
-        return attributes
