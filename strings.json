@@ -2,13 +2,21 @@
   "config": {
     "step": {
       "user": {
-        "title": "Konfiguracja Wirtualnego Magazynu Energii",
-        "description": "Podaj encje zbilansowane oraz początkowy stan magazynu z ostatniej faktury.",
+        "title": "Krok 1: Wybór liczników",
+        "description": "Podaj encje zbilansowane oraz współczynnik opustu.",
         "data": {
           "source_export": "Encja zbilansowanego eksportu (kWh)",
           "source_import": "Encja zbilansowanego importu (kWh)",
-          "factor": "Współczynnik opustu (np. 0.8 dla instalacji do 10kW)",
-          "initial_balance": "Aktualny surowy stan magazynu z faktury (kWh)"
+          "factor": "Współczynnik opustu (np. 0.8 dla instalacji do 10kW)"
+        }
+      },
+      "months": {
+        "title": "Krok 2: Wprowadź surowe stany z faktury",
+        "description": "Wpisz wartości (w kWh) z kolumny 'Ilość pozostała do rozliczenia' dla poszczególnych miesięcy.",
+        "data": {
+          "m1": "Styczeń", "m2": "Luty", "m3": "Marzec", "m4": "Kwiecień",
+          "m5": "Maj", "m6": "Czerwiec", "m7": "Lipiec", "m8": "Sierpień",
+          "m9": "Wrzesień", "m10": "Październik", "m11": "Listopad", "m12": "Grudzień"
         }
       }
     }
