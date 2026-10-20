@@ -8,13 +8,15 @@ class NetMeteringStorageConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     VERSION = 1
 
     def __init__(self):
+        """Inicjalizacja przepływu konfiguracji."""
         self.init_data = {}
 
     async def async_step_user(self, user_input=None):
         """Krok 1: Wybór encji i współczynnika."""
         if user_input is not None:
             self.init_data.update(user_input)
-            return await self.async_step_months()
+            # POPRAWKA: Przejście do kolejnego kroku musi być wywołane przez przekazanie pustego słownika do funkcji obsługującej krok
+            return await self.async_step_months(user_input=None)
 
         data_schema = vol.Schema({
             vol.Required(CONF_SOURCE_EXPORT): selector({"entity": {"domain": "sensor", "device_class": "energy"}}),
