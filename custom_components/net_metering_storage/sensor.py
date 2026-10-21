@@ -2,7 +2,8 @@ import logging
 from datetime import datetime
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.components.sensor import SensorEntity, SensorDeviceClass, SensorStateClass
+from homeassistant.components.sensor import SensorDeviceClass, SensorStateClass
+from homeassistant.components.restore_sensor import RestoreSensor
 from homeassistant.helpers.event import async_track_state_change_event
 from .const import DOMAIN, CONF_SOURCE_EXPORT, CONF_SOURCE_IMPORT, CONF_FACTOR
 
@@ -17,8 +18,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     
     async_add_entities([sensor_raw, sensor_net])
 
-class VirtualStorageSensor(SensorEntity):
-    """Implementacja uniwersalnego sensora wirtualnego magazynu energii."""
+class VirtualStorageSensor(RestoreSensor):
+    """Implementacja uniwersalnego sensora magazynu energii odpornego na restarty (RestoreSensor)."""
     
     def __init__(self, hass, entry, config, is_raw):
         self.hass = hass
@@ -28,10 +29,8 @@ class VirtualStorageSensor(SensorEntity):
         self._import_entity = config[CONF_SOURCE_IMPORT]
         self._factor = config[CONF_FACTOR]
         
-        # Pobieramy słownik wartości dla 12 miesięcy przekazany z Config Flow
+        # Wartości domyślne z konfiguracji (użyte tylko przy pierwszym uruchomieniu w życiu)
         self._months_storage = {int(k): float(v) for k, v in config["initial_months"].items()}
-        
-        # Zapamiętujemy bieżący miesiąc w celu późniejszego automatycznego resetu po roku
         self._current_tracked_month = datetime.now().month
         
         self._attr_device_class = SensorDeviceClass.ENERGY
@@ -49,7 +48,32 @@ class VirtualStorageSensor(SensorEntity):
         self._last_import = None
 
     async def async_added_to_hass(self):
-        """Rejestracja nasłuchiwania zmian stanu liczników źródłowych."""
+        """Przywracanie danych z bazy HA po restarcie oraz rejestracja nasłuchiwania zmian."""
+        # 1. Próba przywrócenia stanu sprzed restartu
+        old_state = await self.async_get_last_state()
+        if old_state is not None:
+            try:
+                # Odtwarzamy stany miesięcy z zapisanych atrybutów tekstowych
+                months_names = {
+                    1: "Styczeń", 2: "Luty", 3: "Marzec", 4: "Kwiecień", 
+                    5: "Maj", 6: "Czerwiec", 7: "Lipiec", 8: "Sierpień", 
+                    9: "Wrzesień", 10: "Październik", 11: "Listopad", 12: "Grudzień"
+                }
+                
+                for m, name in months_names.items():
+                    if name in old_state.attributes:
+                        val_str = old_state.attributes[name].replace(" kWh", "")
+                        # Jeśli to sensor czysty (x0.8), musimy zapisać w surowej pamięci wartość podzieloną przez factor
+                        if not self._is_raw:
+                            self._months_storage[m] = float(val_str) / self._factor
+                        else:
+                            self._months_storage[m] = float(val_str)
+                
+                _LOGGER.info("Wirtualny Magazyn (%s): Pomyślnie przywrócono stany miesięcy po restarcie.", self._attr_name)
+            except Exception as e:
+                _LOGGER.error("Wirtualny Magazyn: Błąd podczas przywracania stanów miesięcy: %s", e)
+
+        # 2. Rejestracja nasłuchiwania zmian stanu liczników źródłowych
         @callback
         def _state_changed_listener(event):
             self.async_update_values()
@@ -73,6 +97,9 @@ class VirtualStorageSensor(SensorEntity):
                 self._last_import = float(imp_state.state)
             except ValueError:
                 pass
+                
+        # Wymuszamy zapis przywróconego stanu do systemu
+        self.async_write_ha_state()
 
     def async_update_values(self):
         """Logika obliczeniowa magazynu z uwzględnieniem FIFO oraz resetu rocznego."""
