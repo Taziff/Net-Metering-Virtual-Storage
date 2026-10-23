@@ -2,8 +2,8 @@ import logging
 from datetime import datetime
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.components.sensor import SensorDeviceClass, SensorStateClass
-from homeassistant.components.restore_sensor import RestoreSensor
+from homeassistant.components.sensor import SensorEntity, SensorDeviceClass, SensorStateClass
+from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.helpers.event import async_track_state_change_event
 from .const import DOMAIN, CONF_SOURCE_EXPORT, CONF_SOURCE_IMPORT, CONF_FACTOR
 
@@ -18,8 +18,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     
     async_add_entities([sensor_raw, sensor_net])
 
-class VirtualStorageSensor(RestoreSensor):
-    """Implementacja uniwersalnego sensora magazynu energii odpornego na restarty (RestoreSensor)."""
+class VirtualStorageSensor(SensorEntity, RestoreEntity):
+    """Implementacja uniwersalnego sensora magazynu energii odpornego na restarty (RestoreEntity)."""
     
     def __init__(self, hass, entry, config, is_raw):
         self.hass = hass
@@ -49,11 +49,10 @@ class VirtualStorageSensor(RestoreSensor):
 
     async def async_added_to_hass(self):
         """Przywracanie danych z bazy HA po restarcie oraz rejestracja nasłuchiwania zmian."""
-        # 1. Próba przywrócenia stanu sprzed restartu
+        # 1. Próba przywrócenia stanu sprzed restartu przy użyciu RestoreEntity
         old_state = await self.async_get_last_state()
         if old_state is not None:
             try:
-                # Odtwarzamy stany miesięcy z zapisanych atrybutów tekstowych
                 months_names = {
                     1: "Styczeń", 2: "Luty", 3: "Marzec", 4: "Kwiecień", 
                     5: "Maj", 6: "Czerwiec", 7: "Lipiec", 8: "Sierpień", 
@@ -63,7 +62,6 @@ class VirtualStorageSensor(RestoreSensor):
                 for m, name in months_names.items():
                     if name in old_state.attributes:
                         val_str = old_state.attributes[name].replace(" kWh", "")
-                        # Jeśli to sensor czysty (x0.8), musimy zapisać w surowej pamięci wartość podzieloną przez factor
                         if not self._is_raw:
                             self._months_storage[m] = float(val_str) / self._factor
                         else:
@@ -98,7 +96,7 @@ class VirtualStorageSensor(RestoreSensor):
             except ValueError:
                 pass
                 
-        # Wymuszamy zapis przywróconego stanu do systemu
+        # Zapisujemy stan do systemu
         self.async_write_ha_state()
 
     def async_update_values(self):
