@@ -15,7 +15,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     
     sensor_raw = VirtualStorageSensor(hass, entry, config, is_raw=True)
     sensor_net = VirtualStorageSensor(hass, entry, config, is_raw=False)
-    # Dodajemy trzeci sensor - Paczkę Zagrożoną
     sensor_alert = EndangeredPackageSensor(hass, entry, config, sensor_net)
     
     async_add_entities([sensor_raw, sensor_net, sensor_alert])
@@ -129,7 +128,7 @@ class VirtualStorageSensor(SensorEntity, RestoreEntity):
                     else:
                         pobor_surowy -= self._months_storage[m]
                         self._months_storage[m] = 0.0
-                    if pobor_surowy <= 0.0: break
+                    if pobor_surowy  0.0:
                 self._state_value = round(val * self._factor, 2)
                 self._endangered_month_name = months_names[m]
                 found = True
