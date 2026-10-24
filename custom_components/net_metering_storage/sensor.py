@@ -15,11 +15,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     
     sensor_raw = VirtualStorageSensor(hass, entry, config, is_raw=True)
     sensor_net = VirtualStorageSensor(hass, entry, config, is_raw=False)
+    # Dodajemy trzeci sensor - Paczkę Zagrożoną
+    sensor_alert = EndangeredPackageSensor(hass, entry, config, sensor_net)
     
-    async_add_entities([sensor_raw, sensor_net])
+    async_add_entities([sensor_raw, sensor_net, sensor_alert])
 
 class VirtualStorageSensor(SensorEntity, RestoreEntity):
-    """Implementacja uniwersalnego sensora magazynu energii odpornego na restarty (RestoreEntity)."""
+    """Implementacja uniwersalnego sensora magazynu energii odpornego na restarty."""
     
     def __init__(self, hass, entry, config, is_raw):
         self.hass = hass
@@ -29,7 +31,6 @@ class VirtualStorageSensor(SensorEntity, RestoreEntity):
         self._import_entity = config[CONF_SOURCE_IMPORT]
         self._factor = config[CONF_FACTOR]
         
-        # Wartości domyślne z konfiguracji (użyte tylko przy pierwszym uruchomieniu w życiu)
         self._months_storage = {int(k): float(v) for k, v in config["initial_months"].items()}
         self._current_tracked_month = datetime.now().month
         
@@ -49,7 +50,6 @@ class VirtualStorageSensor(SensorEntity, RestoreEntity):
 
     async def async_added_to_hass(self):
         """Przywracanie danych z bazy HA po restarcie oraz rejestracja nasłuchiwania zmian."""
-        # 1. Próba przywrócenia stanu sprzed restartu przy użyciu RestoreEntity
         old_state = await self.async_get_last_state()
         if old_state is not None:
             try:
@@ -71,7 +71,6 @@ class VirtualStorageSensor(SensorEntity, RestoreEntity):
             except Exception as e:
                 _LOGGER.error("Wirtualny Magazyn: Błąd podczas przywracania stanów miesięcy: %s", e)
 
-        # 2. Rejestracja nasłuchiwania zmian stanu liczników źródłowych
         @callback
         def _state_changed_listener(event):
             self.async_update_values()
@@ -80,23 +79,17 @@ class VirtualStorageSensor(SensorEntity, RestoreEntity):
             self.hass, [self._export_entity, self._import_entity], _state_changed_listener
         ))
         
-        # Odczyt stanów początkowych liczników przy starcie encji
         exp_state = self.hass.states.get(self._export_entity)
         imp_state = self.hass.states.get(self._import_entity)
         
         if exp_state and exp_state.state not in (None, "unknown", "unavailable"):
-            try:
-                self._last_export = float(exp_state.state)
-            except ValueError:
-                pass
+            try: self._last_export = float(exp_state.state)
+            except ValueError: pass
                 
         if imp_state and imp_state.state not in (None, "unknown", "unavailable"):
-            try:
-                self._last_import = float(imp_state.state)
-            except ValueError:
-                pass
+            try: self._last_import = float(imp_state.state)
+            except ValueError: pass
                 
-        # Zapisujemy stan do systemu
         self.async_write_ha_state()
 
     def async_update_values(self):
@@ -104,38 +97,29 @@ class VirtualStorageSensor(SensorEntity, RestoreEntity):
         exp_state = self.hass.states.get(self._export_entity)
         imp_state = self.hass.states.get(self._import_entity)
         
-        if not exp_state or not imp_state:
-            return
-
-        if exp_state.state in (None, "unknown", "unavailable") or imp_state.state in (None, "unknown", "unavailable"):
-            return
+        if not exp_state or not imp_state: return
+        if exp_state.state in (None, "unknown", "unavailable") or imp_state.state in (None, "unknown", "unavailable"): return
 
         try:
             current_export = float(exp_state.state)
             current_import = float(imp_state.state)
-        except ValueError:
-            return
+        except ValueError: return
 
         now_month = datetime.now().month
 
-        # Automatyczne czyszczenie miesiąca sprzed roku przy zmianie miesiąca kalendarzowego
         if now_month != self._current_tracked_month:
             self._months_storage[now_month] = 0.0
             self._current_tracked_month = now_month
-            _LOGGER.info("Wirtualny Magazyn: Wykryto zmianę miesiąca na %s. Resetowanie danych sprzed roku.", now_month)
 
         if self._last_export is not None and self._last_import is not None:
             delta_export = current_export - self._last_export
             delta_import = current_import - self._last_import
             
-            # Dodawanie wyprodukowanej energii do bieżącego miesiąca
             if delta_export > 0:
                 self._months_storage[now_month] += delta_export
 
-            # Pobieranie energii z najstarszych paczek (Kolejka FIFO)
             if delta_import > 0:
                 pobor_surowy = delta_import / self._factor
-                
                 order = list(range(now_month + 1, 13)) + list(range(1, now_month + 1))
                 for m in order:
                     if self._months_storage[m] >= pobor_surowy:
@@ -145,34 +129,24 @@ class VirtualStorageSensor(SensorEntity, RestoreEntity):
                     else:
                         pobor_surowy -= self._months_storage[m]
                         self._months_storage[m] = 0.0
-                    if pobor_surowy <= 0:
-                        break
-
-        self._last_export = current_export
-        self._last_import = current_import
+                    if pobor_surowy  0.0:
+                self._state_value = round(val * self._factor, 2)
+                self._endangered_month_name = months_names[m]
+                found = True
+                break
+                
+        if not found:
+            self._state_value = 0.0
+            self._endangered_month_name = "Brak"
+            
         self.async_write_ha_state()
 
     @property
     def state(self):
-        """Zwraca sumaryczną wartość magazynu energii."""
-        total_raw = sum(self._months_storage.values())
-        if self._is_raw:
-            return round(total_raw, 2)
-        return round(total_raw * self._factor, 2)
+        """Zwraca surową liczbę kWh potrzebną do wykresu liniowego."""
+        return self._state_value
 
     @property
     def extra_state_attributes(self):
-        """Definiuje rozbicie na miesiące widoczne w atrybutach encji."""
-        months_names = {
-            1: "Styczeń", 2: "Luty", 3: "Marzec", 4: "Kwiecień", 
-            5: "Maj", 6: "Czerwiec", 7: "Lipiec", 8: "Sierpień", 
-            9: "Wrzesień", 10: "Październik", 11: "Listopad", 12: "Grudzień"
-        }
-        
-        attributes = {}
-        multiplier = 1.0 if self._is_raw else self._factor
-        
-        for m, val in self._months_storage.items():
-            attributes[months_names[m]] = f"{round(val * multiplier, 2)} kWh"
-            
-        return attributes
+        """Zapisuje nazwę zagrożonego miesiąca w atrybutach tekstowych."""
+        return {"zagrozony_miesiac": self._endangered_month_name}
