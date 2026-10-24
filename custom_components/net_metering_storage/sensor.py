@@ -129,7 +129,7 @@ class VirtualStorageSensor(SensorEntity, RestoreEntity):
                     else:
                         pobor_surowy -= self._months_storage[m]
                         self._months_storage[m] = 0.0
-                    if pobor_surowy  0.0:
+                    if pobor_surowy <= 0.0:
                 self._state_value = round(val * self._factor, 2)
                 self._endangered_month_name = months_names[m]
                 found = True
